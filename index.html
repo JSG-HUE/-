@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#0b0d0d" />
+<title>卢沟桥 · 1937 — 守桥</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app" class="menu-mode">
+
+  <!-- ================= 左侧任务栏 ================= -->
+  <aside id="missionPanel" aria-label="任务面板">
+    <div class="mp-paper"></div>
+    <div class="mp-head">
+      <div class="mp-seal">战<br />报</div>
+      <div class="mp-headtext">
+        <span>二十九军 · 战地任务</span>
+        <b>卢沟桥 1937</b>
+      </div>
+      <div class="mp-live"><i></i><span id="mpLive">待命</span></div>
+    </div>
+
+    <div class="mp-chapterline">
+      <span id="mpChapterNo">第一章</span>
+      <i></i>
+      <span id="mpDate">1937.7.7 — 7.8</span>
+    </div>
+    <h1 id="mpChapterTitle">卢沟桥 · 夜</h1>
+    <div class="mp-location"><span id="mpLocation">宛平 · 卢沟桥</span><b id="mpTime">夜至拂晓</b></div>
+
+    <section class="mp-mission">
+      <div class="mp-label"><i></i> 当前任务</div>
+      <h2 id="mpMission">守住桥头</h2>
+      <p id="mpMissionDesc">击退日军进攻，守住卢沟桥，掩护宛平城。</p>
+      <ul id="mpObjectiveList" class="mp-objectives"></ul>
+      <div id="mpBarWrap" class="mp-bar">
+        <div class="mp-bar-head"><span id="mpBarLabel">桥头阵地</span><b id="mpBarValue">100%</b></div>
+        <div class="mp-bar-track"><i id="mpBarFill"></i></div>
+      </div>
+    </section>
+
+    <section class="mp-figure">
+      <div class="mp-label"><i></i> 关键人物</div>
+      <div class="mp-figure-body">
+        <div class="mp-portrait-frame"><img id="mpPortrait" alt="关键人物" /></div>
+        <div class="mp-figure-info">
+          <strong id="mpFigureName">金振中</strong>
+          <span id="mpFigureRole">二一九团三营营长</span>
+          <p id="mpFigureQuote">“桥在，宛平就在。”</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="mp-player">
+      <div class="mp-label"><i></i> 本兵 · 小满</div>
+      <div class="mp-player-top">
+        <div class="mp-avatar"><img id="mpAvatar" alt="小满" /></div>
+        <div class="mp-health">
+          <div class="mp-player-name"><b>小满</b><span>二等兵</span></div>
+          <div class="mp-health-track"><i id="mpHealthFill"></i></div>
+        </div>
+        <div class="mp-health-num" id="mpHealthNum">100</div>
+      </div>
+      <div class="mp-ammo">
+        <span>汉阳造</span>
+        <div class="mp-pips" id="mpAmmoPips"></div>
+        <b id="mpAmmo">5 / 40</b>
+      </div>
+      <div class="mp-melee">
+        <span>大刀</span>
+        <div class="mp-melee-track"><i id="mpMeleeFill"></i></div>
+        <b id="mpMeleeText">就绪</b>
+      </div>
+    </section>
+
+    <div class="mp-actions">
+      <button id="panelCodex">战地日志</button>
+      <button id="panelPause">暂停</button>
+      <button id="panelMute">声音</button>
+    </div>
+    <div class="mp-foot">二十九军 · 三十七师 · 一一〇旅 · 二一九团</div>
+  </aside>
+
+  <!-- ================= 2D 战场 ================= -->
+  <main id="stage">
+    <canvas id="gameCanvas"></canvas>
+    <div class="stage-grain"></div>
+    <div class="stage-vignette"></div>
+
+    <div id="stageTop" class="stage-ui">
+      <div class="st-left">
+        <span id="stChapter">第一章 · 卢沟桥 · 夜</span>
+        <i></i>
+        <span id="stDate">1937.7.8 拂晓</span>
+      </div>
+      <div class="st-mid"><span id="stWave">第 一 波</span><b id="stObjective">守住桥头</b></div>
+      <div class="st-right">
+        <button id="stMute" title="静音">声音</button>
+        <button id="stPause" title="暂停">Ⅱ</button>
+      </div>
+    </div>
+
+    <div id="waveBanner" class="wave-banner stage-ui">
+      <div class="wb-kicker" id="wbKicker">卢沟桥 · 守桥记</div>
+      <div class="wb-title" id="wbTitle"></div>
+      <div class="wb-sub" id="wbSub"></div>
+    </div>
+
+    <div id="crosshair" class="crosshair stage-ui">
+      <span class="ch-line c1"></span><span class="ch-line c2"></span>
+      <span class="ch-line c3"></span><span class="ch-line c4"></span>
+      <span class="ch-dot"></span><span class="ch-ring"></span>
+    </div>
+    <div id="hitmarker" class="hitmarker"><span></span><span></span><span></span><span></span></div>
+
+    <div id="damageVignette" class="damage-vignette"></div>
+    <div id="flashVignette" class="flash-vignette"></div>
+
+    <div id="radioLine" class="radio-line stage-ui">
+      <b id="radioName"></b><span id="radioText"></span>
+    </div>
+
+    <div id="prompt" class="prompt stage-ui hidden"><kbd>E</kbd><span id="promptText">补给</span></div>
+
+    <div id="controlsHint" class="controls-hint stage-ui">
+      <span><b>A / D</b> 移动</span><span><b>鼠标</b> 瞄准</span><span><b>左键</b> 射击</span><span><b>F</b> 大刀</span><span><b>R</b> 装填</span><span><b>Space</b> 跳跃</span><span><b>Ctrl</b> 蹲下</span><span><b>Esc</b> 暂停</span>
+    </div>
+
+    <!-- 对白 -->
+    <div id="dialogue" class="dialogue hidden">
+      <div class="dlg-portrait"><img id="dlgPortrait" alt="" /></div>
+      <div class="dlg-main">
+        <div class="dlg-head"><b id="dlgName"></b><span id="dlgRole"></span></div>
+        <p id="dlgText"></p>
+        <div class="dlg-hint">空格 / 点击继续 <i></i></div>
+      </div>
+      <div class="dlg-seal">一九三七</div>
+    </div>
+
+    <!-- 章节封面 -->
+    <div id="chapterCard" class="screen-card chapter-card hidden">
+      <div class="sc-frame"></div>
+      <div class="chapter-inner">
+        <div class="cc-kicker" id="ccKicker">第一章</div>
+        <h2 id="ccTitle">卢沟桥 · 夜</h2>
+        <div class="cc-date" id="ccDate">1937.7.7 — 7.8</div>
+        <div class="cc-rule"><i></i><b>卢沟桥 · 守桥记</b><i></i></div>
+        <p class="cc-quote" id="ccQuote"></p>
+        <p class="cc-source" id="ccSource"></p>
+        <button id="ccBtn" class="main-btn compact"><span>进入战场</span><small>按空格继续</small></button>
+      </div>
+    </div>
+
+    <!-- 章节完成 -->
+    <div id="chapterEnd" class="screen-card chapter-end hidden">
+      <div class="sc-frame"></div>
+      <div class="ce-inner">
+        <div class="cc-kicker" id="ceKicker">第一章 · 完成</div>
+        <h2 id="ceTitle">桥还在我们手里</h2>
+        <p class="ce-text" id="ceText"></p>
+        <div class="ce-stats" id="ceStats"></div>
+        <div class="ce-actions">
+          <button id="ceNext" class="main-btn compact"><span>继续</span><small>下一章</small></button>
+          <button id="ceMenu" class="ghost-btn">返回主菜单</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 失败 -->
+    <div id="gameOver" class="screen-card game-over hidden">
+      <div class="sc-frame"></div>
+      <div class="go-inner">
+        <div class="cc-kicker">战斗结束</div>
+        <h2 id="goTitle">阵地失守</h2>
+        <p class="ce-text" id="goReason"></p>
+        <div class="ce-stats" id="goStats"></div>
+        <div class="ce-actions">
+          <button id="goRetry" class="main-btn compact"><span>重新集结</span><small>再守一次</small></button>
+          <button id="goMenu" class="ghost-btn">返回主菜单</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 终章 -->
+    <div id="finalScreen" class="screen-card final-screen hidden">
+      <div class="sc-frame"></div>
+      <div class="final-inner">
+        <div class="cc-kicker">一九三七 · 卢沟桥</div>
+        <h2>他们没能守住北平<br /><span>却守住了中国人的脊梁</span></h2>
+        <p class="final-text">7月29日，北平沦陷。二十九军撤往保定。<br />但卢沟桥的枪声，已经唤醒了整个民族。</p>
+        <div class="final-stats" id="finalStats"></div>
+        <p class="final-note">主角小满为虚构人物。佟麟阁、赵登禹、吉星文、金振中、王冷斋、何基沣等为真实历史人物。<br />铭记历史，珍爱和平。</p>
+        <div class="ce-actions">
+          <button id="finalMenu" class="main-btn compact"><span>返回主菜单</span><small>一九三七 · 卢沟桥</small></button>
+          <button id="finalCodex" class="ghost-btn">翻开战地日志</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 暂停 -->
+    <div id="pause" class="screen-card pause hidden">
+      <div class="sc-frame"></div>
+      <div class="pause-inner">
+        <div class="cc-kicker">战斗暂停</div>
+        <h2>桥还在我们手里</h2>
+        <p class="ce-text">整理呼吸，检查枪膛。敌人不会等太久。</p>
+        <div class="pause-stats">
+          <div><strong id="pauseKills">0</strong><span>击毙</span></div>
+          <div><strong id="pauseWave">1</strong><span>当前波次</span></div>
+          <div><strong id="pauseAccuracy">0%</strong><span>命中率</span></div>
+        </div>
+        <div class="ce-actions">
+          <button id="btnResume" class="main-btn compact"><span>继续战斗</span><small>回到阵地</small></button>
+          <button id="btnRestart" class="ghost-btn">重新开始本章</button>
+          <button id="btnPauseCodex" class="ghost-btn">战地日志</button>
+          <button id="btnPauseMenu" class="ghost-btn">返回主菜单</button>
+        </div>
+        <div class="pause-keys">
+          <span><b>A / D</b> 移动</span><span><b>鼠标</b> 瞄准</span><span><b>左键</b> 射击</span><span><b>F</b> 大刀</span><span><b>R</b> 装填</span><span><b>E</b> 补给</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ================= 主菜单 ================= -->
+  <section id="menu" class="menu">
+    <div class="menu-shade"></div>
+    <div class="menu-noise"></div>
+    <div class="menu-content">
+      <div class="menu-eyebrow"><span></span> 1937 · 七七事变 · 卢沟桥</div>
+      <div class="menu-title"><h1>卢沟桥</h1><b>守桥</b></div>
+      <div class="menu-en">THE BRIDGE · 1937</div>
+      <div class="menu-rule"><i></i><b>二十九军 · 守桥记</b><i></i></div>
+      <p class="menu-lede">七月七日夜，枪声撕开宛平的雨幕。<br />你是一名二十九军的小兵。身后是宛平城，脚下是卢沟桥——<em>一步也不能退。</em></p>
+
+      <div class="menu-difficulty">
+        <div class="menu-label">战斗难度</div>
+        <div class="diff-row" id="menuDiff">
+          <button data-diff="easy" class="diff-btn">新兵<span>火力较弱</span></button>
+          <button data-diff="normal" class="diff-btn active">老兵<span>标准战场</span></button>
+          <button data-diff="hard" class="diff-btn">血战<span>九死一生</span></button>
+        </div>
+      </div>
+
+      <div class="menu-actions">
+        <button id="menuStart" class="main-btn"><span id="menuStartText">开始守桥</span><small>ENTER THE BATTLEFIELD</small><i></i></button>
+        <button id="menuRestart" class="ghost-btn hidden">从第一章重新开始</button>
+      </div>
+
+      <div class="menu-chapters">
+        <div class="menu-label">章节</div>
+        <div class="chapter-row" id="menuChapters">
+          <button data-chapter="0" class="chapter-btn active"><b>一</b><span>卢沟桥 · 夜</span></button>
+          <button data-chapter="1" class="chapter-btn"><b>二</b><span>大刀 · 夜袭</span></button>
+          <button data-chapter="2" class="chapter-btn"><b>三</b><span>南苑 · 最后一日</span></button>
+        </div>
+      </div>
+
+      <div class="menu-links">
+        <button id="menuCodex">战地日志</button><span>·</span>
+        <button id="menuHowto">操作说明</button><span>·</span>
+        <button id="menuAbout">关于本作</button>
+      </div>
+    </div>
+
+    <aside class="menu-aside">
+      <div class="menu-quote">一寸山河一寸血</div>
+      <i></i>
+      <div class="menu-quote small">十万青年十万军</div>
+    </aside>
+
+    <div class="menu-corner tl"></div><div class="menu-corner tr"></div>
+    <div class="menu-corner bl"></div><div class="menu-corner br"></div>
+
+    <footer class="menu-footer">
+      <span>铭记历史 · 珍爱和平</span>
+      <span class="menu-hint">历史题材虚构作品 · 主角为虚构的二十九军小兵 · 键鼠操作</span>
+    </footer>
+  </section>
+
+  <!-- ================= 战地日志 ================= -->
+  <section id="codex" class="codex hidden">
+    <div class="codex-card">
+      <button id="codexClose" class="codex-close" aria-label="关闭">×</button>
+      <div class="codex-head">
+        <div class="codex-eyebrow">二十九军 · 战地日志</div>
+        <h2 id="codexTitle">一九三七 · 卢沟桥</h2>
+        <div class="codex-tabs" id="codexTabs">
+          <button data-tab="timeline" class="active">时间线</button>
+          <button data-tab="figures">关键人物</button>
+          <button data-tab="weapons">部队与武器</button>
+          <button data-tab="controls">操作</button>
+          <button data-tab="about">关于本作</button>
+        </div>
+      </div>
+      <div class="codex-body" id="codexBody"></div>
+      <div class="codex-foot">资料依据：新华社、中国军网、国防部网、人民网公开史料 · 游戏内对白为艺术化处理</div>
+    </div>
+  </section>
+
+  <!-- ================= 开机 ================= -->
+  <div id="boot" class="boot">
+    <div class="boot-seal">卢</div>
+    <div class="boot-title">正在展开战地地图</div>
+    <div class="boot-bar"><i id="bootFill"></i></div>
+    <div class="boot-sub" id="bootSub">1937 · 宛平 · 永定河</div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
