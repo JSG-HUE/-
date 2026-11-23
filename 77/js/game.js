@@ -3074,11 +3074,25 @@
 
   /* ================= 场景绘制 ================= */
   function draw() {
+    const menuView = S.mode === 'menu' || S.mode === 'boot' || (S.mode === 'codex' && S.codexReturn && S.codexReturn.mode === 'menu');
+    // === 3D 渲染路径 ===
+    if (window.R3D && window.R3D.ok) {
+      // 同步 3D 场景所需的状态字段（原 2D 缓存字段仍由逻辑层维护）
+      S.time = S.time || 0;
+      if (!ctx) return;
+      try {
+        window.R3D.render(S, { vw: VW, cw: UI.canvas.width, ch: UI.canvas.height, viewScale: viewScale, viewOffX: viewOffX, viewOffY: viewOffY, dpr: dpr });
+      } catch (e) {
+        console.error('[3D] render failed', e);
+        if (!window.__r3dFailed) { window.__r3dFailed = true; }
+      }
+      if (!window.__r3dFailed) return;
+    }
+    // === 原 2D 回退路径 ===
     if (!ctx) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, UI.canvas.width, UI.canvas.height);
     ctx.setTransform(dpr * viewScale, 0, 0, dpr * viewScale, dpr * viewOffX, dpr * viewOffY);
-    const menuView = S.mode === 'menu' || S.mode === 'boot' || (S.mode === 'codex' && S.codexReturn && S.codexReturn.mode === 'menu');
     if (menuView) drawMenuScene();
     else drawBattleScene();
   }
@@ -4423,6 +4437,12 @@
       buildPortraits();
     } catch (e) {
       console.error('portrait error', e);
+    }
+    // 初始化 3D 渲染层（失败则自动回退到原 2D 绘制）
+    try {
+      if (window.R3D && window.R3D.init) window.R3D.init();
+    } catch (e) {
+      console.error('[3D] init failed, fallback to 2D', e);
     }
     initAtmosphere();
     loadSave();
