@@ -4,8 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <meta name="theme-color" content="#0b0d0d" />
-<title>卢沟桥 · 1937 — 守桥</title>
-<link rel="stylesheet" href="style.css" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<title>中国战场 1927—1949 · 3D 第一人称</title>
+<link rel="stylesheet" href="style.css?v=23" />
 </head>
 <body>
 <div id="app" class="menu-mode">
@@ -83,9 +85,10 @@
     <div class="mp-foot" id="mpFoot">二十九军 · 三十七师 · 一一〇旅 · 二一九团</div>
   </aside>
 
-  <!-- ================= 2D 战场 ================= -->
+  <!-- ================= 3D 战场 ================= -->
   <main id="stage">
     <canvas id="gameCanvas"></canvas>
+    <canvas id="gameCanvas3d"></canvas>
     <div class="stage-grain"></div>
     <div class="stage-vignette"></div>
 
@@ -125,25 +128,7 @@
     <div id="prompt" class="prompt stage-ui hidden"><kbd>E</kbd><span id="promptText">补给</span></div>
 
     <div id="controlsHint" class="controls-hint stage-ui">
-      <span><b>A / D</b> 移动</span><span><b>鼠标</b> 瞄准</span><span><b>左键</b> 射击</span><span><b>F</b> 大刀</span><span><b>R</b> 装填</span><span><b>Space</b> 跳跃</span><span><b>Ctrl</b> 蹲下</span><span><b>Esc</b> 暂停</span>
-    </div>
-
-    <!-- 右下角摄像头 / 手势 -->
-    <div id="cameraDock" class="camera-dock hidden">
-      <div class="cam-head"><span>摄像头 · 手势</span><b id="camState">未开启</b></div>
-      <div class="cam-view">
-        <video id="camVideo" autoplay muted playsinline></video>
-        <canvas id="camOverlay" width="192" height="144"></canvas>
-        <div class="cam-placeholder" id="camPlaceholder">点击下方“摄像头”开启</div>
-        <div class="cam-frame-corner tl"></div><div class="cam-frame-corner tr"></div>
-        <div class="cam-frame-corner bl"></div><div class="cam-frame-corner br"></div>
-      </div>
-      <div class="cam-controls">
-        <label class="cam-switch"><input id="camToggle" type="checkbox"><span class="cam-slider"></span><em>摄像头</em></label>
-        <label class="cam-switch"><input id="gestureToggle" type="checkbox"><span class="cam-slider"></span><em>手势</em></label>
-      </div>
-      <div class="cam-hint" id="camHint">手势：画面左/右移动 · 上抬跳跃 · 下压蹲下</div>
-      <div class="cam-keyhint">键鼠操控始终可用</div>
+      <span><b>点击画面</b> 锁定鼠标</span><span><b>W / S</b> 前后</span><span><b>A / D</b> 横移</span><span><b>Q / E</b> 转身</span><span><b>鼠标</b> 视角 / 瞄准</span><span><b>左键</b> 射击</span><span><b>F</b> 大刀</span><span><b>R</b> 装填</span><span><b>Space</b> 跳跃</span><span><b>C / Ctrl</b> 蹲下</span><span><b>Esc</b> 暂停</span>
     </div>
 
     <!-- 对白 -->
@@ -236,7 +221,7 @@
           <button id="btnPauseMenu" class="ghost-btn">返回主菜单</button>
         </div>
         <div class="pause-keys">
-          <span><b>A / D</b> 移动</span><span><b>鼠标</b> 瞄准</span><span><b>左键</b> 射击</span><span><b>F</b> 大刀</span><span><b>R</b> 装填</span><span><b>E</b> 补给</span>
+          <span><b>W / S</b> 前后</span><span><b>A / D</b> 横移</span><span><b>Q / E</b> 转身</span><span><b>鼠标</b> 视角 / 瞄准</span><span><b>左键</b> 射击</span><span><b>F</b> 大刀</span><span><b>R</b> 装填</span><span><b>Space</b> 跳跃</span><span><b>C</b> 蹲下</span><span><b>E</b> 补给</span>
         </div>
       </div>
     </div>
@@ -321,6 +306,7 @@
           <button data-diff="hard" class="wm-diff-btn">血战</button>
         </div>
         <div class="wm-links">
+          <button id="wmFpsDemo" class="wm-demo" onclick="window.FPS3D&&window.FPS3D.open()">3D 竖切</button>
           <button id="wmCodex">战地日志</button>
           <button id="wmHowto">操作说明</button>
         </div>
@@ -403,9 +389,51 @@
   <div id="toast" class="toast"></div>
 </div>
 
-<script src="js/three.min.js"></script>
-<script src="js/render3d.js"></script>
-<script src="js/data.js"></script>
-<script src="js/game.js"></script>
+<!-- ================= 3D 竖切：卢沟桥 ================= -->
+<div id="fpsDemo" class="fps-demo hidden">
+  <canvas id="fpsCanvas"></canvas>
+  <div class="fps-vignette"></div>
+  <div id="fpsDamage" class="fps-damage"></div>
+  <div class="fps-topbar">
+    <div class="fps-title"><small>3D VERTICAL SLICE · 1937</small><b>卢沟桥 · 夜</b></div>
+    <button id="fpsExit" class="fps-exit">退出竖切</button>
+  </div>
+  <div class="fps-cross" id="fpsCross"><i></i></div>
+  <div class="fps-hud">
+    <div class="fps-stat"><span>生命</span><b id="fpsHp">100</b></div>
+    <div class="fps-stat"><span>弹药</span><b id="fpsAmmo">8 / 32</b></div>
+    <div class="fps-stat"><span>残敌</span><b id="fpsEnemies">3</b></div>
+    <div class="fps-objective">任务：守住桥头，击退日军</div>
+  </div>
+  <div class="fps-tip" id="fpsTip">点击画面锁定鼠标 · WASD 移动 · Q/E 转身 · 左键射击 · R 装填 · Esc 暂停</div>
+  <div class="fps-message" id="fpsMessage"></div>
+
+  <div class="fps-start" id="fpsStart">
+    <div class="fps-start-card">
+      <small>TECH DEMO · TRUE 3D</small>
+      <h2>卢沟桥 · 夜</h2>
+      <p>真实 3D 坐标 · 胶囊碰撞 · 鼠标视角 · 网格寻路 · 两波攻防</p>
+      <div class="fps-start-keys">
+        <span><b>WASD</b> 移动</span>
+        <span><b>鼠标</b> 视角 / 瞄准</span>
+        <span><b>Q / E</b> 转身</span>
+        <span><b>左键</b> 射击</span>
+        <span><b>Space</b> 跳跃</span>
+        <span><b>C</b> 蹲下</span>
+        <span><b>R</b> 装填</span>
+        <span><b>爆头</b> 一击毙敌</span>
+      </div>
+      <button id="fpsEnter" class="fps-enter">点击进入</button>
+      <button id="fpsBack" class="fps-back">返回战役地图</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/three.min.js?v=1"></script>
+<script src="js/render3d.js?v=23"></script>
+<script src="js/data.js?v=23"></script>
+<script src="js/game.js?v=23"></script>
+<script src="js/fps3d.js?v=23"></script>
 </body>
 </html>
+

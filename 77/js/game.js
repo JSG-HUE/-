@@ -1,6 +1,6 @@
 /* =========================================================
-   卢沟桥 · 1937 — 2D 守桥
-   纯 Canvas 2D / WebAudio / 无外部素材
+   中国战场 · 1927—1949 — 3D 第一人称
+   二维战斗逻辑驱动，Three.js 渲染 3D 场景
    ========================================================= */
 (function () {
   'use strict';
@@ -14,6 +14,7 @@
   const TAU = Math.PI * 2;
   const GROUND = 650;
   const VH = 810;
+  const WORLD_SCALE = .024;
 
   const DIFFS = {
     easy: { key: 'easy', label: '新兵', dmg: .65, acc: .72, hp: 120, ammo: 12, count: -1, speed: .92 },
@@ -38,8 +39,6 @@
     crosshair: $('crosshair'), hitmarker: $('hitmarker'), damageVignette: $('damageVignette'), flashVignette: $('flashVignette'),
     radioLine: $('radioLine'), radioName: $('radioName'), radioText: $('radioText'),
     prompt: $('prompt'), promptText: $('promptText'), controlsHint: $('controlsHint'),
-    cameraDock: $('cameraDock'), camVideo: $('camVideo'), camOverlay: $('camOverlay'), camPlaceholder: $('camPlaceholder'),
-    camToggle: $('camToggle'), gestureToggle: $('gestureToggle'), camState: $('camState'), camHint: $('camHint'),
     dialogue: $('dialogue'), dlgPortrait: $('dlgPortrait'), dlgName: $('dlgName'), dlgRole: $('dlgRole'), dlgText: $('dlgText'),
     chapterCard: $('chapterCard'), ccKicker: $('ccKicker'), ccTitle: $('ccTitle'), ccDate: $('ccDate'),
     ccRule: $('ccRule'), ccQuote: $('ccQuote'), ccSource: $('ccSource'), ccBtn: $('ccBtn'),
@@ -137,8 +136,9 @@
     camX: 0,
     camTarget: 0,
     mouse: { x: 800, y: 420, inside: false, initialized: false },
-    gesture: { on: false, left: false, right: false, crouch: false, jumpUntil: 0, nextJump: 0, handX: .5, handY: .5, seen: false },
-    camera: { stream: null, on: false, starting: false, detecting: false, timer: 0, detect: null, dctx: null, octx: null, lastHint: 0, error: '', reqId: 0 },
+    look: { yaw: 0, pitch: 0 },
+    pointerLocked: false,
+    mouseLookFallback: false,
     crosshairClient: null,
     canvasRect: null,
     hudTimer: 0,
@@ -884,7 +884,7 @@
   function setPlayingUI(on) {
     UI.crosshair.classList.toggle('hidden', !on);
     UI.controlsHint.classList.toggle('hidden', !on);
-    if (!on) showPrompt(null);
+    if (!on) { releasePointer(); showPrompt(null); }
   }
 
   /* ---------------- 菜单 ---------------- */
@@ -935,8 +935,6 @@
     UI.pause.classList.add('hidden');
     UI.dialogue.classList.add('hidden');
     UI.codex.classList.add('hidden');
-    UI.cameraDock.classList.add('hidden');
-    stopCamera();
     UI.map.classList.add('hidden');
     UI.app.classList.remove('map-mode');
     setPlayingUI(false);
@@ -1116,8 +1114,6 @@
     UI.pause.classList.add('hidden');
     UI.dialogue.classList.add('hidden');
     UI.codex.classList.add('hidden');
-    UI.cameraDock.classList.add('hidden');
-    stopCamera();
     UI.app.classList.remove('menu-mode', 'in-game', 'dialogue-mode', 'paused', 'card-mode');
     UI.app.classList.add('map-mode');
     setPlayingUI(false);
@@ -1165,6 +1161,10 @@
     S.promptCache = null;
     S.level = makeLevel(index, opts.battle);
     S.player = makePlayer(S.level.start);
+    S.look = { yaw: 0, pitch: 0 };
+    S.pointerLocked = false;
+    S.mouseLookFallback = false;
+    releasePointer();
     S.level.obstacles = [];
     S.level.fires = [];
     S.level.allies = [];
@@ -1183,7 +1183,8 @@
     UI.pause.classList.add('hidden');
     UI.dialogue.classList.add('hidden');
     UI.codex.classList.add('hidden');
-    UI.cameraDock.classList.remove('hidden');
+    UI.waveBanner.classList.remove('show');
+    UI.radioLine.classList.remove('show');
     setPlayingUI(false);
     const scenario = currentScenario();
     setChapterUI(scenario);
@@ -1473,7 +1474,7 @@
   }
   function makePlayer(x) {
     return {
-      x, y: GROUND, vy: 0, vx: 0,
+      x, y: GROUND, vy: 0, vx: 0, lat: 0,
       facing: 1, aim: 0, crouch: false, sprint: false, moving: false,
       walk: 0, bob: 0, onGround: true,
       hp: S.diff.hp, maxHp: S.diff.hp,
@@ -1483,6 +1484,42 @@
       muzzle: 0, hitFlash: 0, invuln: 0, alive: true,
       supplyUsed: false, lastDamage: -99, footsteps: 0, weaponLocked: false
     };
+  }
+  function laneHalf(type) {
+    if (type === 'stone') return 3.7;
+    if (type === 'rail') return 3.9;
+    if (type === 'town') return 7.2;
+    if (type === 'mountain') return 8.2;
+    return 8.8;
+  }
+  function moveTowards(v, target, step) {
+    if (v < target) return Math.min(target, v + step);
+    return Math.max(target, v - step);
+  }
+  function obstacleAhead(x, lat, radius) {
+    if (Math.abs(lat || 0) > 1.05) return null;
+    for (const o of S.level.obstacles) {
+      if (o.type === 'supply' && S.supply && S.supply.used && o.x === S.supply.x) continue;
+      if (x + radius > o.x && x - radius < o.x + o.w) return o;
+    }
+    return null;
+  }
+  function stepActor(actor, dir, speed, dt, radius, gait) {
+    const half = laneHalf(S.level.type);
+    const nx = clamp(actor.x + dir * speed * dt, 40, S.level.width - 30);
+    const block = obstacleAhead(nx, actor.lat || 0, radius);
+    if (block) {
+      const side = actor.avoidSide || (actor.x % 2 < 1 ? -1 : 1);
+      actor.avoidT = .8;
+      const target = side * Math.min(2.1, half - .15);
+      actor.lat = moveTowards(actor.lat || 0, target, 2.4 * dt);
+      if (Math.abs(actor.lat || 0) > 1.02) actor.x = nx;
+    } else {
+      actor.x = nx;
+      if (actor.avoidT > 0) actor.avoidT -= dt;
+      else actor.lat = moveTowards(actor.lat || 0, actor.homeLat || 0, 1.1 * dt);
+    }
+    actor.walk += dt * (gait || 6);
   }
   function addObstacle(x, w, h, type) {
     const o = { x, y: GROUND - h, w, h, type };
@@ -1494,9 +1531,9 @@
   }
   function makeAlly(x, hp) {
     return {
-      x, y: GROUND, hp: hp || 110, maxHp: hp || 110, alive: true,
+      x, y: GROUND, lat: 0, homeLat: 0, hp: hp || 110, maxHp: hp || 110, alive: true,
       fireCd: rand(.8, 2), aim: 0, muzzle: 0, hitFlash: 0, deathT: 0,
-      facing: 1, walk: 0, name: ''
+      facing: 1, walk: 0, name: '', speed: 72, avoidSide: 1, avoidT: 0
     };
   }
   const ENEMY_DEFS = {
@@ -1516,6 +1553,9 @@
       fireTimer: rand(2.0, 4.0), burstLeft: 0, burstTimer: 0, meleeCd: rand(.6, 1.4),
       aim: 0, wishAim: 0, muzzle: 0, walk: rand(0, TAU), facing: -1,
       nest: type === 'nest', nestId: opts.nestId || 0,
+      lat: type === 'nest' ? 0 : (opts.lat !== undefined ? opts.lat : rand(-1.2, 1.2)),
+      homeLat: type === 'nest' ? 0 : (opts.lat !== undefined ? opts.lat : 0),
+      avoidSide: Math.random() < .5 ? -1 : 1, avoidT: 0,
       spawnSmoke: 0, hitBar: 0
     };
     S.enemies.push(e);
@@ -1746,7 +1786,43 @@
   }
 
   /* ---------------- 输入 ---------------- */
+  function releasePointer() {
+    if (document.pointerLockElement) {
+      try { document.exitPointerLock(); } catch (e) { }
+    }
+    S.pointerLocked = false;
+    S.mouseLookFallback = false;
+    if (UI.app) UI.app.classList.remove('fps-lock');
+  }
+  function enableMouseLookFallback() {
+    if (S.pointerLocked || S.mode !== 'playing') return;
+    if (!S.mouseLookFallback) showToast('鼠标锁定不可用，已切换为直接鼠标视角');
+    S.mouseLookFallback = true;
+    UI.app.classList.add('fps-lock');
+    S.crosshairClient = { x: UI.stage.clientWidth / 2, y: UI.stage.clientHeight / 2 };
+    S.lastCrossX = -1;
+    S.lastCrossY = -1;
+  }
+  function requestPointer() {
+    if (S.mode !== 'playing' || S.pointerLocked || S.mouseLookFallback) return;
+    if (!window.LQ3D || !window.LQ3D.active || !window.LQ3D.active()) return;
+    if (!UI.canvas.requestPointerLock) {
+      enableMouseLookFallback();
+      return;
+    }
+    try {
+      const req = UI.canvas.requestPointerLock();
+      if (req && typeof req.catch === 'function') req.catch(() => enableMouseLookFallback());
+    } catch (e) {
+      enableMouseLookFallback();
+      return;
+    }
+    setTimeout(() => {
+      if (!S.pointerLocked && S.mode === 'playing') enableMouseLookFallback();
+    }, 800);
+  }
   function updateMouse(e) {
+    if (S.pointerLocked || S.mouseLookFallback) return;
     const r = S.canvasRect || UI.canvas.getBoundingClientRect();
     S.mouse.x = clamp((e.clientX - r.left - viewOffX) / viewScale, 0, VW);
     S.mouse.y = clamp((e.clientY - r.top - viewOffY) / viewScale, 0, VH);
@@ -1754,7 +1830,11 @@
     S.mouse.inside = true;
   }
   function updateCrosshair() {
-    if (S.mode !== 'playing' || !S.crosshairClient) return;
+    if (S.mode !== 'playing') return;
+    if (S.pointerLocked || S.mouseLookFallback) {
+      S.crosshairClient = { x: UI.stage.clientWidth / 2, y: UI.stage.clientHeight / 2 };
+    }
+    if (!S.crosshairClient) return;
     const c = S.crosshairClient;
     if (c.x !== S.lastCrossX || c.y !== S.lastCrossY) {
       UI.crosshair.style.transform = 'translate(' + c.x + 'px,' + c.y + 'px) translate(-50%,-50%)';
@@ -1762,257 +1842,59 @@
       S.lastCrossY = c.y;
     }
   }
-  /* ---------------- 摄像头 / 手势 ---------------- */
-  function camError(msg) {
-    S.camera.error = msg;
-    clearInterval(S.camera.timer);
-    S.camera.timer = 0;
-    S.camera.detecting = false;
-    S.camera.starting = false;
-    if (S.camera.stream) {
-      for (const t of S.camera.stream.getTracks()) t.stop();
-      S.camera.stream = null;
-    }
-    if (UI.camVideo) UI.camVideo.srcObject = null;
-    S.camera.on = false;
-    S.gesture.on = false;
-    S.gesture.left = S.gesture.right = S.gesture.crouch = false;
-    if (UI.camToggle) UI.camToggle.checked = false;
-    if (UI.gestureToggle) UI.gestureToggle.checked = false;
-    UI.cameraDock.classList.remove('camera-on', 'gesture-on');
-    UI.cameraDock.classList.add('cam-error');
-    UI.camState.textContent = '不可用';
-    UI.camHint.textContent = msg;
-    UI.camPlaceholder.textContent = '摄像头不可用';
-    if (S.camera.octx) S.camera.octx.clearRect(0, 0, 192, 144);
-  }
-  function stopCamera() {
-    S.camera.reqId++;
-    clearInterval(S.camera.timer);
-    S.camera.timer = 0;
-    S.camera.detecting = false;
-    S.camera.starting = false;
-    if (S.camera.stream) {
-      for (const t of S.camera.stream.getTracks()) t.stop();
-      S.camera.stream = null;
-    }
-    if (UI.camVideo) UI.camVideo.srcObject = null;
-    S.camera.on = false;
-    S.camera.error = '';
-    S.gesture.on = false;
-    S.gesture.left = S.gesture.right = S.gesture.crouch = false;
-    S.gesture.jumpUntil = 0;
-    if (UI.camToggle) UI.camToggle.checked = false;
-    if (UI.gestureToggle) UI.gestureToggle.checked = false;
-    UI.cameraDock.classList.remove('camera-on', 'gesture-on', 'cam-error');
-    UI.camState.textContent = '未开启';
-    UI.camHint.textContent = '手势：画面左/右移动 · 上抬跳跃 · 下压蹲下';
-    UI.camPlaceholder.textContent = '点击下方“摄像头”开启';
-    if (S.camera.octx) S.camera.octx.clearRect(0, 0, 192, 144);
-  }
-  async function startCamera() {
-    if (S.camera.on) {
-      if (S.gesture.on) startGestureLoop();
-      return;
-    }
-    if (S.camera.starting) return;
-    S.camera.starting = true;
-    S.camera.error = '';
-    UI.cameraDock.classList.remove('cam-error');
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      camError('浏览器不支持摄像头。请用 Edge / Chrome 打开。');
-      return;
-    }
-    const req = ++S.camera.reqId;
-    UI.camToggle.checked = true;
-    UI.camState.textContent = '请求权限…';
-    UI.camHint.textContent = '请在浏览器弹窗中允许摄像头';
-    let timeout = 0;
-    let timedOut = false;
-    try {
-      const gum = navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15, max: 24 }, facingMode: 'user' }
-      });
-      gum.then(s => {
-        if (timedOut || req !== S.camera.reqId) for (const t of s.getTracks()) t.stop();
-      }).catch(() => { });
-      const stream = await Promise.race([
-        gum,
-        new Promise((_, reject) => {
-          timeout = setTimeout(() => { timedOut = true; reject({ name: 'TimeoutError' }); }, 10000);
-        })
-      ]);
-      clearTimeout(timeout);
-      if (req !== S.camera.reqId) {
-        for (const t of stream.getTracks()) t.stop();
-        S.camera.starting = false;
-        return;
-      }
-      S.camera.stream = stream;
-      UI.camVideo.srcObject = stream;
-      S.camera.on = true;
-      S.camera.starting = false;
-      UI.camVideo.play().catch(() => { });
-      UI.cameraDock.classList.add('camera-on');
-      UI.cameraDock.classList.remove('cam-error');
-      UI.camState.textContent = S.gesture.on ? '手势中' : '已开启';
-      UI.camHint.textContent = S.gesture.on ? '手势已启用 · 键鼠仍可用' : '摄像头已开启 · 打开“手势”开始操控';
-      if (S.gesture.on) startGestureLoop();
-    } catch (e) {
-      clearTimeout(timeout);
-      S.camera.starting = false;
-      if (req !== S.camera.reqId) return;
-      let msg = '摄像头无法开启。';
-      if (!window.isSecureContext) msg = '当前页面无法访问摄像头。请用本地 http:// 打开，或改用 Edge 并允许摄像头。';
-      else if (e && e.name === 'NotAllowedError') msg = '摄像头权限被拒绝。请在地址栏允许摄像头后重试。';
-      else if (e && e.name === 'NotFoundError') msg = '没有找到摄像头设备。';
-      else if (e && e.name === 'NotReadableError') msg = '摄像头被其他程序占用。';
-      else if (e && e.name === 'TimeoutError') msg = '摄像头请求超时。请检查系统权限，或换用 Edge 并允许摄像头。';
-      camError(msg);
-    }
-  }
-  function startGestureLoop() {
-    if (!S.camera.on || !S.gesture.on || S.camera.timer) return;
-    if (!S.camera.detect) {
-      S.camera.detect = document.createElement('canvas');
-      S.camera.detect.width = 96;
-      S.camera.detect.height = 72;
-      S.camera.dctx = S.camera.detect.getContext('2d', { willReadFrequently: true });
-    }
-    if (!S.camera.octx) {
-      const o = UI.camOverlay;
-      o.width = 192; o.height = 144;
-      S.camera.octx = o.getContext('2d');
-    }
-    S.camera.detecting = true;
-    S.camera.timer = setInterval(analyzeCamera, 95);
-  }
-  function startGesture() {
-    S.gesture.on = true;
-    UI.gestureToggle.checked = true;
-    UI.cameraDock.classList.add('gesture-on');
-    if (!S.camera.on) {
-      startCamera();
-      return;
-    }
-    UI.camState.textContent = '手势中';
-    UI.camHint.textContent = '手势已启用 · 键鼠仍可用';
-    startGestureLoop();
-  }
-  function stopGesture() {
-    S.gesture.on = false;
-    S.gesture.left = S.gesture.right = S.gesture.crouch = false;
-    S.gesture.jumpUntil = 0;
-    clearInterval(S.camera.timer);
-    S.camera.timer = 0;
-    S.camera.detecting = false;
-    if (UI.gestureToggle) UI.gestureToggle.checked = false;
-    UI.cameraDock.classList.remove('gesture-on');
-    if (S.camera.on) {
-      UI.camState.textContent = '已开启';
-      UI.camHint.textContent = '摄像头已开启 · 打开“手势”开始操控';
-    }
-    if (S.camera.octx) S.camera.octx.clearRect(0, 0, 192, 144);
-  }
-  function analyzeCamera() {
-    if (!S.gesture.on || !S.camera.on || document.hidden) return;
-    const v = UI.camVideo;
-    if (!v || v.readyState < 2 || !v.videoWidth) return;
-    const W = 96, H = 72;
-    const dctx = S.camera.dctx;
-    dctx.save();
-    dctx.scale(-1, 1);
-    dctx.drawImage(v, -W, 0, W, H);
-    dctx.restore();
-    let img;
-    try { img = dctx.getImageData(0, 0, W, H).data; } catch (e) { return; }
-    let left = 0, right = 0, top = 0, bottom = 0, skin = 0, sx = 0, sy = 0, samples = 0;
-    for (let y = 2; y < H; y += 2) {
-      for (let x = 2; x < W; x += 2) {
-        samples++;
-        const i = (y * W + x) * 4;
-        const r = img[i], g = img[i + 1], b = img[i + 2];
-        const yy = .299 * r + .587 * g + .114 * b;
-        const cb = 128 - .168736 * r - .331264 * g + .5 * b;
-        const cr = 128 + .5 * r - .418688 * g - .081312 * b;
-        if (yy < 55 || yy > 242 || cb < 77 || cb > 132 || cr < 133 || cr > 177 || r < 55 || r - g < 8 || r - b < 15) continue;
-        const nx = x / W, ny = y / H;
-        // 排除面部中央，避免把脸当成“手”
-        if (nx > .34 && nx < .66 && ny > .16 && ny < .58) continue;
-        skin++;
-        sx += nx; sy += ny;
-        if (nx < .38) left++;
-        if (nx > .62) right++;
-        if (ny < .30) top++;
-        if (ny > .68) bottom++;
-      }
-    }
-    const g = S.gesture;
-    const now = performance.now();
-    const seen = skin > 42;
-    if (!seen) {
-      g.seen = false;
-      g.left = g.right = g.crouch = false;
-      g.jumpUntil = 0;
-    } else {
-      g.seen = true;
-      const cx = sx / skin, cy = sy / skin;
-      g.handX += (cx - g.handX) * .42;
-      g.handY += (cy - g.handY) * .42;
-      const l = left / samples, r = right / samples, t = top / samples, bo = bottom / samples;
-      g.left = (l > .020 && l > r * 1.28) || (g.left && l > .010 && l > r);
-      g.right = (r > .020 && r > l * 1.28) || (g.right && r > .010 && r > l);
-      g.crouch = bo > .016 && g.handY > .60;
-      if (t > .011 && g.handY < .34 && now > g.nextJump) {
-        g.jumpUntil = now + 260;
-        g.nextJump = now + 820;
-      }
-    }
-    // 画面上的识别标记
-    const octx = S.camera.octx;
-    if (octx) {
-      octx.clearRect(0, 0, 192, 144);
-      octx.strokeStyle = 'rgba(192,161,102,.18)';
-      octx.lineWidth = 1;
-      octx.beginPath(); octx.moveTo(64, 0); octx.lineTo(64, 144); octx.moveTo(128, 0); octx.lineTo(128, 144); octx.stroke();
-      octx.beginPath(); octx.moveTo(0, 43); octx.lineTo(192, 43); octx.moveTo(0, 98); octx.lineTo(192, 98); octx.stroke();
-      if (g.seen) {
-        const hx = g.handX * 192, hy = g.handY * 144;
-        octx.strokeStyle = 'rgba(230,190,110,.9)';
-        octx.lineWidth = 2;
-        octx.beginPath(); octx.arc(hx, hy, 12, 0, TAU); octx.stroke();
-        octx.fillStyle = 'rgba(230,190,110,.9)';
-        octx.beginPath(); octx.arc(hx, hy, 2, 0, TAU); octx.fill();
-      }
-    }
-    if (now - S.camera.lastHint > 260) {
-      S.camera.lastHint = now;
-      if (!S.camera.error) {
-        let hint = '未识别到手 · 在镜头前挥挥手';
-        if (g.seen) {
-          const acts = [];
-          if (now < g.jumpUntil) acts.push('上抬 → 跳跃');
-          if (g.crouch) acts.push('下压 → 蹲下');
-          if (g.right) acts.push('画面右 → 右移');
-          if (g.left) acts.push('画面左 → 左移');
-          hint = acts.length ? '识别：' + acts.join(' · ') : '手势已识别 · 移动手控制人物';
-        }
-        UI.camHint.textContent = hint;
-      }
-    }
-  }
-
   function bindInput() {
+    UI.canvas.tabIndex = 0;
+    const dragLook = { x: 0, y: 0, on: false };
+    UI.canvas.addEventListener('pointerdown', () => {
+      try { UI.canvas.focus({ preventScroll: true }); } catch (e) { UI.canvas.focus(); }
+    });
     UI.canvas.addEventListener('mousemove', updateMouse);
     UI.canvas.addEventListener('mouseleave', () => { S.mouse.inside = false; });
     UI.canvas.addEventListener('contextmenu', e => e.preventDefault());
     UI.canvas.addEventListener('mousedown', e => {
+      dragLook.x = e.clientX; dragLook.y = e.clientY; dragLook.on = true;
       if (S.mode !== 'playing') return;
       e.preventDefault();
       Audio.init(); Audio.resume();
-      if (e.button === 0) shoot();
-      else if (e.button === 2) melee();
+      if (e.button === 0) {
+        requestPointer();
+        shoot();
+      } else if (e.button === 2) melee();
+    });
+    window.addEventListener('mouseup', () => { dragLook.on = false; });
+    UI.canvas.addEventListener('click', () => {
+      if (S.mode === 'playing') requestPointer();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!S.pointerLocked && !S.mouseLookFallback) return;
+      if (S.mode !== 'playing') return;
+      if (S.pointerLocked) {
+        // 指针锁定：自由 360° 水平旋转 + 近 ±90° 俯仰
+        S.look.yaw += (e.movementX || 0) * .0022;
+        S.look.pitch = clamp(S.look.pitch - (e.movementY || 0) * .0022, -1.35, 1.35);
+      } else {
+        // 回退模式（锁定失败）：按住鼠标拖拽转视角，movementX 在无锁定时恒为 0 不可用
+        if (!dragLook.on) return;
+        S.look.yaw += (e.clientX - dragLook.x) * .005;
+        S.look.pitch = clamp(S.look.pitch - (e.clientY - dragLook.y) * .005, -1.35, 1.35);
+        dragLook.x = e.clientX; dragLook.y = e.clientY;
+      }
+      // 归一化 yaw，防止长时间旋转浮点漂移
+      if (S.look.yaw > Math.PI) S.look.yaw -= Math.PI * 2;
+      else if (S.look.yaw < -Math.PI) S.look.yaw += Math.PI * 2;
+    });
+    document.addEventListener('pointerlockchange', () => {
+      S.pointerLocked = document.pointerLockElement === UI.canvas;
+      if (S.pointerLocked) S.mouseLookFallback = false;
+      UI.app.classList.toggle('fps-lock', S.pointerLocked || S.mouseLookFallback);
+      if (S.pointerLocked || S.mouseLookFallback) {
+        S.crosshairClient = { x: UI.stage.clientWidth / 2, y: UI.stage.clientHeight / 2 };
+        S.lastCrossX = -1;
+        S.lastCrossY = -1;
+      }
+    });
+    document.addEventListener('pointerlockerror', () => {
+      enableMouseLookFallback();
     });
     window.addEventListener('keydown', e => {
       Audio.init(); Audio.resume();
@@ -2042,14 +1924,6 @@
     window.addEventListener('keyup', e => { S.keys[e.code] = false; });
     window.addEventListener('blur', () => { S.keys = Object.create(null); });
     document.addEventListener('pointerdown', () => { Audio.init(); Audio.resume(); }, { once: true });
-    UI.camToggle.addEventListener('change', () => {
-      if (UI.camToggle.checked) startCamera();
-      else stopCamera();
-    });
-    UI.gestureToggle.addEventListener('change', () => {
-      if (UI.gestureToggle.checked) startGesture();
-      else stopGesture();
-    });
 
     UI.ccBtn.addEventListener('click', advanceCard);
     UI.chapterCard.addEventListener('click', e => { if (e.target === UI.chapterCard) advanceCard(); });
@@ -2127,6 +2001,11 @@
   }
   function updateAim() {
     const p = S.player;
+    if (S.pointerLocked || S.mouseLookFallback) {
+      p.aim = S.look.yaw;
+      p.facing = Math.cos(S.look.yaw) >= 0 ? 1 : -1;
+      return;
+    }
     const sh = shoulderPoint();
     const sx = sh.x - S.camX;
     const angle = Math.atan2(S.mouse.y - sh.y, S.mouse.x - sx);
@@ -2170,13 +2049,17 @@
     const m = muzzlePoint();
     const spread = (p.crouch ? .008 : p.moving ? .032 : .014) + (p.sprint ? .02 : 0);
     const a = p.aim + rand(-spread, spread);
-    S.bullets.push({
-      x: m.x, y: m.y, px: m.x, py: m.y,
-      vx: Math.cos(a) * 1550, vy: Math.sin(a) * 1550,
-      life: 1.2, owner: 'player', damage: 55, color: '#ffe0a0'
-    });
+    const use3D = !!(window.LQ3D && window.LQ3D.active && window.LQ3D.active());
+    if (!use3D) {
+      S.bullets.push({
+        x: m.x, y: m.y, px: m.x, py: m.y,
+        vx: Math.cos(a) * 1550, vy: Math.sin(a) * 1550,
+        life: 1.2, owner: 'player', damage: 55, color: '#ffe0a0'
+      });
+    }
     spawnCasing(m.x, m.y, a);
     spawnMuzzle(m.x, m.y, a, 1);
+    if (use3D) window.LQ3D.shoot(S);
     S.shake = Math.max(S.shake, .13);
     S.flash = Math.max(S.flash, .08);
     sfx('shot');
@@ -2278,42 +2161,46 @@
   function updatePlayer(dt) {
     const p = S.player;
     if (!p || !p.alive) return;
-    const g = S.gesture;
-    const gOn = !!(g && g.on);
-    p.crouch = !!(S.keys['KeyS'] || S.keys['ControlLeft'] || S.keys['ControlRight'] || (gOn && g.crouch));
+    p.crouch = !!(S.keys['KeyC'] || S.keys['ControlLeft'] || S.keys['ControlRight']);
+    if (S.keys['KeyQ']) S.look.yaw += 2.2 * dt;
+    if (S.keys['KeyE']) S.look.yaw -= 2.2 * dt;
     p.sprint = !!(S.keys['ShiftLeft'] || S.keys['ShiftRight']) && !p.crouch;
-    const left = S.keys['KeyA'] || S.keys['ArrowLeft'] || (gOn && g.left);
-    const right = S.keys['KeyD'] || S.keys['ArrowRight'] || (gOn && g.right);
-    const dir = (right ? 1 : 0) - (left ? 1 : 0);
+    const fwd = (S.keys['KeyW'] || S.keys['ArrowUp'] ? 1 : 0) - (S.keys['KeyS'] || S.keys['ArrowDown'] ? 1 : 0);
+    const strafe = (S.keys['KeyD'] || S.keys['ArrowRight'] ? 1 : 0) - (S.keys['KeyA'] || S.keys['ArrowLeft'] ? 1 : 0);
     const speed = p.crouch ? 95 : p.sprint ? 295 : 210;
-    p.moving = dir !== 0;
-    if (dir !== 0) {
-      p.vx = dir * speed;
+    p.moving = fwd !== 0 || strafe !== 0;
+    if (p.moving) {
       p.walk += dt * (p.sprint ? 13 : p.crouch ? 6 : 9);
     } else {
-      p.vx = 0;
       p.walk += dt * 1.4;
     }
-    if (dir !== 0) {
-      const nx = clamp(p.x + p.vx * dt, S.level.minX, S.level.maxX);
+    const yaw = S.look ? S.look.yaw : 0;
+    const moveX = Math.cos(yaw) * fwd - Math.sin(yaw) * strafe;
+    const moveZ = Math.sin(yaw) * fwd + Math.cos(yaw) * strafe;
+    if (Math.abs(moveX) > .001) {
+      const nx = clamp(p.x + moveX * speed * dt, S.level.minX, S.level.maxX);
       const r = playerRect(nx, p.y);
       let blocked = false;
-      for (const o of S.level.obstacles) {
-        if (o.type === 'supply' && S.supply && S.supply.used && o.x === S.supply.x) continue;
-        if (rectsOverlap(r, o)) { blocked = true; break; }
+      // Only the central lane collides with cover; strafing to the side
+      // lets the player walk around sandbags and crates.
+      if (Math.abs(p.lat || 0) < .95) {
+        for (const o of S.level.obstacles) {
+          if (o.type === 'supply' && S.supply && S.supply.used && o.x === S.supply.x) continue;
+          if (rectsOverlap(r, o)) { blocked = true; break; }
+        }
       }
       if (!blocked) p.x = nx;
-      else {
-        // 允许贴着障碍停下
-        p.x = clamp(p.x, S.level.minX, S.level.maxX);
-      }
+      p.facing = moveX >= 0 ? 1 : -1;
     }
-    const gestureJump = gOn && performance.now() < g.jumpUntil;
-    if ((S.keys['Space'] || S.keys['KeyW'] || S.keys['ArrowUp'] || gestureJump) && p.onGround && !p.crouch) {
+    if (Math.abs(moveZ) > .001) {
+      const half = laneHalf(S.level.type);
+      p.lat = clamp((p.lat || 0) + moveZ * speed * dt * WORLD_SCALE, -half, half);
+    }
+    p.vx = moveX * speed;
+    if (S.keys['Space'] && p.onGround && !p.crouch) {
       p.vy = -760;
       p.onGround = false;
       p.y -= 2;
-      if (gestureJump) g.jumpUntil = 0;
     }
     if (!p.onGround) {
       p.vy += 2100 * dt;
@@ -2588,7 +2475,7 @@
       if (!e.nest) {
         if (e.type === 'charger') {
           if (dist > 52) {
-            e.x += Math.sign(dx) * e.speed * dt;
+            stepActor(e, Math.sign(dx), e.speed, dt, 18, e.type === 'charger' ? 13 : 6);
             moving = true;
           } else if (e.meleeCd <= 0) {
             e.meleeCd = 1.1;
@@ -2598,17 +2485,17 @@
         } else {
           const wantMove = dist > e.range || !visible;
           if (wantMove) {
-            e.x += Math.sign(dx) * e.speed * dt;
+            stepActor(e, Math.sign(dx), e.speed, dt, 17, 6);
             moving = true;
           } else if (dist < e.range * .58) {
-            e.x -= Math.sign(dx) * e.speed * .34 * dt;
+            stepActor(e, -Math.sign(dx), e.speed * .34, dt, 17, 6);
             moving = true;
           }
         }
         e.x = clamp(e.x, 40, S.level.width - 30);
-        e.walk += dt * (moving ? (e.type === 'charger' ? 13 : 6) : 1.2);
       }
       e.meleeCd = Math.max(0, e.meleeCd - dt);
+      e.moving = moving;
 
       if (e.type !== 'charger') {
         if (e.burstLeft > 0) {
@@ -2647,11 +2534,27 @@
     }
   }
   function updateAllies(dt) {
-    for (const a of S.allies) {
+    const p = S.player;
+    for (let i = 0; i < S.allies.length; i++) {
+      const a = S.allies[i];
       if (!a.alive) { a.deathT += dt; continue; }
       a.fireCd -= dt;
       a.muzzle = Math.max(0, a.muzzle - dt);
       a.hitFlash = Math.max(0, a.hitFlash - dt);
+      // Allies keep a loose formation behind the player and sidestep cover.
+      if (p && p.alive) {
+        a.homeLat = (i % 2 ? 1.5 : -1.5);
+        const followX = p.x - 70 - (i % 3) * 42;
+        const d = followX - a.x;
+        if (Math.abs(d) > 26) {
+          stepActor(a, Math.sign(d), a.speed || 72, dt, 14, 6);
+        } else {
+          a.walk += dt * 1.5;
+          if (a.avoidT > 0) a.avoidT -= dt;
+          else a.lat = moveTowards(a.lat || 0, a.homeLat, 1.1 * dt);
+        }
+        a.x = clamp(a.x, 40, S.level.width - 30);
+      }
       let target = null, best = 720;
       for (const e of S.enemies) {
         if (!e.alive) continue;
@@ -2874,7 +2777,7 @@
           showRadio('narrator', '炮击来袭！离开落点！');
         }
         if (Math.random() < dt * 1.4) {
-          cs.civilians.push({ x: rand(S.camX + VW * .5, S.camX + VW - 40), y: GROUND, speed: rand(55, 85), phase: rand(0, TAU), keep: rand(0, 1) });
+          cs.civilians.push({ x: rand(S.camX + VW * .5, S.camX + VW - 40), y: GROUND, lat: rand(-1.5, 1.5), homeLat: 0, speed: rand(55, 85), phase: rand(0, TAU), keep: rand(0, 1), walk: rand(0, TAU), avoidSide: Math.random() < .5 ? -1 : 1, avoidT: 0 });
         }
       }
     } else if (cs.phase === 'retreat') {
@@ -2891,7 +2794,7 @@
     // 平民/学兵向后跑
     for (let i = cs.civilians.length - 1; i >= 0; i--) {
       const c = cs.civilians[i];
-      c.x -= c.speed * dt;
+      stepActor(c, -1, c.speed, dt, 12, 8);
       c.phase += dt * 8;
       if (c.x < S.camX - 80) cs.civilians.splice(i, 1);
     }
@@ -3074,25 +2977,12 @@
 
   /* ================= 场景绘制 ================= */
   function draw() {
-    const menuView = S.mode === 'menu' || S.mode === 'boot' || (S.mode === 'codex' && S.codexReturn && S.codexReturn.mode === 'menu');
-    // === 3D 渲染路径 ===
-    if (window.R3D && window.R3D.ok) {
-      // 同步 3D 场景所需的状态字段（原 2D 缓存字段仍由逻辑层维护）
-      S.time = S.time || 0;
-      if (!ctx) return;
-      try {
-        window.R3D.render(S, { vw: VW, cw: UI.canvas.width, ch: UI.canvas.height, viewScale: viewScale, viewOffX: viewOffX, viewOffY: viewOffY, dpr: dpr });
-      } catch (e) {
-        console.error('[3D] render failed', e);
-        if (!window.__r3dFailed) { window.__r3dFailed = true; }
-      }
-      if (!window.__r3dFailed) return;
-    }
-    // === 原 2D 回退路径 ===
     if (!ctx) return;
+    if (window.LQ3D && window.LQ3D.render(S)) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, UI.canvas.width, UI.canvas.height);
     ctx.setTransform(dpr * viewScale, 0, 0, dpr * viewScale, dpr * viewOffX, dpr * viewOffY);
+    const menuView = S.mode === 'menu' || S.mode === 'boot' || (S.mode === 'codex' && S.codexReturn && S.codexReturn.mode === 'menu');
     if (menuView) drawMenuScene();
     else drawBattleScene();
   }
@@ -4437,12 +4327,6 @@
       buildPortraits();
     } catch (e) {
       console.error('portrait error', e);
-    }
-    // 初始化 3D 渲染层（失败则自动回退到原 2D 绘制）
-    try {
-      if (window.R3D && window.R3D.init) window.R3D.init();
-    } catch (e) {
-      console.error('[3D] init failed, fallback to 2D', e);
     }
     initAtmosphere();
     loadSave();
